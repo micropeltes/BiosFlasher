@@ -4,6 +4,14 @@ Aplikasi desktop sederhana (tampilan klasik ala Windows 2000) untuk
 meng-upload file BIOS ke chip SPI-NOR lewat board **ESP32-C3-DevKitM-1**
 (firmware: `SPI_ESP32C3_biosFLASHER`, USB native, tanpa USB-TTL).
 
+## Download
+
+EXE siap pakai (single file, **tidak perlu install .NET**):
+
+> https://github.com/micropeltes/BiosFlasher/releases/latest
+
+Mau build sendiri? Lihat bagian **Build** di bawah.
+
 ## Bahasa / Languages / 语言
 
 Tersedia 3 bahasa, dipilih dari combo **Bahasa / Language / 语言** di kotak
