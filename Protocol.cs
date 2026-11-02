@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.IO.Ports;
 using System.Text;
@@ -7,6 +8,38 @@ using System.Threading;
 
 namespace BiosFlasher
 {
+    /// <summary>CRC-32 (IEEE 802.3 / zlib / PNG) - sama dengan yang dihitung firmware.</summary>
+    public static class Crc32
+    {
+        private static readonly uint[] Table = BuildTable();
+
+        private static uint[] BuildTable()
+        {
+            uint[] t = new uint[256];
+            for (uint i = 0; i < 256; i++)
+            {
+                uint c = i;
+                for (int k = 0; k < 8; k++)
+                    c = ((c & 1) != 0) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
+                t[i] = c;
+            }
+            return t;
+        }
+
+        public static uint Compute(byte[] data)
+        {
+            return Compute(data, 0, data == null ? 0 : data.Length);
+        }
+
+        public static uint Compute(byte[] data, int offset, int count)
+        {
+            uint crc = 0xFFFFFFFFu;
+            for (int i = 0; i < count; i++)
+                crc = Table[(crc ^ data[offset + i]) & 0xFF] ^ (crc >> 8);
+            return crc ^ 0xFFFFFFFFu;
+        }
+    }
+
     /// <summary>Kesalahan yang berasal dari firmware / port serial.</summary>
     public class DeviceException : Exception
     {
@@ -456,6 +489,176 @@ namespace BiosFlasher
         public void ResetChip()
         {
             Command("reset", 20000);
+        }
+
+        /* ------------------------------------------------------------------
+         *  fitur cepat: tulis biner (wbin)
+         * ---------------------------------------------------------------- */
+
+        /// <summary>
+        /// Tulis data memakai perintah "wbin" (byte mentah, 1024 byte/chunk).
+        /// return false kalau firmware lama belum mendukung (perintah tidak dikenal).
+        /// </summary>
+        public bool TryWriteFlashBinary(uint addr, byte[] data, Action<long, long> progress,
+                                        CancellationToken ct, Action<string> log)
+        {
+            if (data == null || data.Length == 0)
+                throw new DeviceException("data kosong");
+
+            Write("wbin " + addr + " " + data.Length + "\n");
+
+            string first = ReadLine(15000);
+            if (first == null)
+                throw new DeviceException("tidak ada balasan untuk 'wbin'");
+
+            first = first.Trim();
+            if (first.StartsWith("!ERR"))
+            {
+                string msg = first.Substring(4).Trim();
+                if (msg.IndexOf("tidak dikenal", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    Sync(2000);
+                    return false;   // firmware lama
+                }
+                throw new DeviceException(msg);
+            }
+            if (!first.StartsWith("WBIN READY"))
+                throw new DeviceException("balasan wbin tidak dikenal: " + first);
+            if (log != null) log(first);
+
+            // "WBIN READY <addr> <len> <chunk>"
+            int chunk = 1024;
+            string[] parts = first.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length >= 4)
+            {
+                int parsed;
+                if (int.TryParse(parts[3], out parsed) && parsed > 0 && parsed <= 8192)
+                    chunk = parsed;
+            }
+
+            long total = data.Length;
+            for (int off = 0; off < data.Length; off += chunk)
+            {
+                if (ct.IsCancellationRequested) throw new OperationCanceledException(ct);
+
+                int n = Math.Min(chunk, data.Length - off);
+                byte[] piece = new byte[n];
+                Array.Copy(data, off, piece, 0, n);
+                Write(piece);
+
+                string ack = ReadAck(20000);
+                if (ack != "+")
+                {
+                    string msg = ack.Length > 1 ? ack.Substring(1).Trim() : "tidak ada ACK dari device";
+                    throw new DeviceException(msg);
+                }
+                if (progress != null) progress(off + n, total);
+            }
+
+            while (true)
+            {
+                string ln = ReadLine(180000);
+                if (ln == null) throw new DeviceException("timeout menunggu hasil wbin");
+                ln = ln.Trim();
+                if (ln.Length == 0) continue;
+                if (ln.StartsWith("!"))
+                    throw new DeviceException(ln.TrimStart('!').Trim());
+                if (ln.StartsWith("WBIN DONE"))
+                {
+                    Sync(3000);
+                    return true;
+                }
+            }
+        }
+
+        /// <summary>Baca CRC32 isi flash. return false kalau firmware belum mendukung.</summary>
+        public bool TryReadCrc(uint addr, uint len, out uint crc, Action<string> log)
+        {
+            crc = 0;
+            Write("crc " + addr + " " + len + "\n");
+
+            while (true)
+            {
+                string ln = ReadLine(150000);
+                if (ln == null) throw new DeviceException("timeout menunggu hasil crc");
+                ln = ln.Trim();
+                if (ln.Length == 0) continue;
+                if (ln.StartsWith("!ERR"))
+                {
+                    string msg = ln.Substring(4).Trim();
+                    if (msg.IndexOf("tidak dikenal", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        Sync(2000);
+                        return false;   // firmware lama
+                    }
+                    throw new DeviceException(msg);
+                }
+                if (ln.StartsWith("CRC32"))
+                {
+                    if (log != null) log(ln);
+                    // "CRC32 <addr-hex> <len> <crc-hex> <ms>"
+                    string[] parts = ln.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length < 4)
+                        throw new DeviceException("format CRC32 tidak dikenal: " + ln);
+
+                    uint value;
+                    if (!uint.TryParse(parts[3], NumberStyles.HexNumber,
+                                       CultureInfo.InvariantCulture, out value))
+                        throw new DeviceException("nilai CRC32 tidak valid: " + ln);
+
+                    crc = value;
+                    Sync(3000);
+                    return true;
+                }
+            }
+        }
+
+        /// <summary>Cek area flash kosong (semua 0xFF). false = firmware belum mendukung.</summary>
+        public bool TryBlankCheck(uint addr, uint len, out uint badFirst, out uint badCount,
+                                  Action<string> log)
+        {
+            badFirst = 0;
+            badCount = 0;
+            Write("blank " + addr + " " + len + "\n");
+
+            while (true)
+            {
+                string ln = ReadLine(150000);
+                if (ln == null) throw new DeviceException("timeout menunggu hasil blank");
+                ln = ln.Trim();
+                if (ln.Length == 0) continue;
+                if (ln.StartsWith("!ERR"))
+                {
+                    string msg = ln.Substring(4).Trim();
+                    if (msg.IndexOf("tidak dikenal", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        Sync(2000);
+                        return false;
+                    }
+                    throw new DeviceException(msg);
+                }
+                if (ln.StartsWith("BLANK OK"))
+                {
+                    if (log != null) log(ln);
+                    Sync(3000);
+                    return true;
+                }
+                if (ln.StartsWith("BLANK FAIL"))
+                {
+                    if (log != null) log(ln);
+                    string[] parts = ln.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length >= 4)
+                    {
+                        uint v;
+                        if (uint.TryParse(parts[2], NumberStyles.HexNumber,
+                                          CultureInfo.InvariantCulture, out v)) badFirst = v;
+                        if (uint.TryParse(parts[3], NumberStyles.Integer,
+                                          CultureInfo.InvariantCulture, out v)) badCount = v;
+                    }
+                    Sync(3000);
+                    return true;   // didukung, tapi isinya tidak kosong
+                }
+            }
         }
     }
 }

@@ -171,6 +171,56 @@ namespace BiosFlasher
                 "erasing the whole chip (may take 1-3 minutes)...", "正在擦除整个芯片（可能需要 1-3 分钟）...");
             Add("prog.failed", "Gagal: {0}", "Failed: {0}", "失败：{0}");
             Add("prog.cancelled.status", "Dibatalkan.", "Cancelled.", "已取消。");
+
+            /* ---- fitur cepat: biner, CRC32, blank check ---- */
+            Add("log.wbin", "kirim data biner (1024 byte/chunk)...",
+                "sending binary data (1024 bytes/chunk)...", "发送二进制数据（每块 1024 字节）...");
+            Add("log.wbin.old", "firmware belum mendukung mode biner - pakai hex",
+                "firmware has no binary mode - using hex", "固件不支持二进制模式 - 改用十六进制");
+            Add("log.blank.check", "cek area kosong (0xFF)...",
+                "checking blank region (0xFF)...", "检查空白区域（0xFF）...");
+            Add("log.blank.ok", "OK - area kosong (0xFF)", "OK - region is blank (0xFF)",
+                "OK - 区域为空（0xFF）");
+            Add("log.blank.fail", "PERINGATAN: {0} byte bukan 0xFF (offset {1})",
+                "WARNING: {0} bytes are not 0xFF (offset {1})",
+                "警告：{0} 字节不是 0xFF（偏移 {1}）");
+            Add("log.blank.old", "firmware belum mendukung cek kosong - dilewati",
+                "firmware has no blank check - skipped", "固件不支持空白检查 - 已跳过");
+            Add("log.crc.check", "verifikasi CRC32...", "verifying CRC32...", "校验 CRC32...");
+            Add("log.crc.match", "CRC32 COCOK ({0})", "CRC32 MATCH ({0})", "CRC32 一致（{0}）");
+            Add("log.crc.mismatch", "CRC32 TIDAK COCOK - file {0}, chip {1}",
+                "CRC32 MISMATCH - file {0}, chip {1}", "CRC32 不一致 - 文件 {0}，芯片 {1}");
+            Add("log.crc.old", "firmware belum mendukung CRC32 - verifikasi penuh byte-per-byte",
+                "firmware has no CRC32 - doing full byte-by-byte verify",
+                "固件不支持 CRC32 - 改用逐字节完整校验");
+            Add("prog.eta", "sisa ~{0}", "ETA ~{0}", "剩余 ~{0}");
+
+            /* ---- Sprint 2: port, log, tentang ---- */
+            Add("log.espport", "port ESP32-C3 terdeteksi: {0}",
+                "ESP32-C3 port detected: {0}", "已检测到 ESP32-C3 端口：{0}");
+            Add("btn.savelog", "Simpan Log", "Save log", "保存日志");
+            Add("btn.about", "Tentang", "About", "关于");
+            Add("log.exported", "log disimpan ke {0}", "log saved to {0}", "日志已保存到 {0}");
+            Add("log.startfile", "log file: {0}", "log file: {0}", "日志文件：{0}");
+            Add("about.text",
+                "BIOS Flasher versi {0}\n\n" +
+                "Programmer SPI-NOR / chip BIOS untuk ESP32-C3-DevKitM-1\n" +
+                "lewat USB native (USB-Serial/JTAG), tanpa USB-TTL.\n\n" +
+                "Firmware : SPI_ESP32C3_biosFLASHER (src/main.cpp)\n" +
+                "Bahasa   : Indonesia / English / 中文\n\n" +
+                "Dipakai dengan hati-hati - selalu buat backup dulu.",
+                "BIOS Flasher version {0}\n\n" +
+                "SPI-NOR / BIOS chip programmer for ESP32-C3-DevKitM-1\n" +
+                "over native USB (USB-Serial/JTAG), no USB-TTL needed.\n\n" +
+                "Firmware : SPI_ESP32C3_biosFLASHER (src/main.cpp)\n" +
+                "Languages: Indonesia / English / 中文\n\n" +
+                "Use with care - always make a backup first.",
+                "BIOS 烧录器 版本 {0}\n\n" +
+                "用于 ESP32-C3-DevKitM-1 的 SPI-NOR / BIOS 芯片烧录工具，\n" +
+                "通过原生 USB（USB-Serial/JTAG），无需 USB-TTL。\n\n" +
+                "固件：SPI_ESP32C3_biosFLASHER (src/main.cpp)\n" +
+                "语言：Indonesia / English / 中文\n\n" +
+                "请谨慎使用 - 务必先备份。");
         }
 
         /* ------------------------------------------------------------------

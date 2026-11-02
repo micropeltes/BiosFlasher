@@ -28,6 +28,23 @@ Kalau file itu belum ada, bahasa mengikuti bahasa Windows (default Indonesia).
 Saat bahasa Mandarin dipakai, font otomatis berganti ke *Microsoft YaHei UI*
 supaya karakter Han tampil rapi.
 
+## Fitur
+
+| Fitur | Keterangan |
+|---|---|
+| Tulis BIOS | unprotect → hapus sector → **blank check** → tulis → verifikasi |
+| Tulis biner cepat | perintah `wbin` 1024 byte/chunk (otomatis fallback ke hex untuk firmware lama) |
+| Verifikasi CRC32 | CRC32 file vs chip (zlib/PNG), fallback byte-per-byte |
+| Backup / Baca | simpan isi chip ke `.bin` sesuai kapasitas hasil `info` |
+| Hapus chip | chip erase total (butuh konfirmasi) |
+| Auto port | memilih sendiri port ESP32-C3 (USB VID `0x303A`) lewat registry |
+| Drag & drop | lepas file `.bin` ke jendela |
+| Log | tersimpan otomatis di `%APPDATA%\BiosFlasher\logs\` + tombol **Simpan Log** |
+| 3 bahasa | Indonesia / English / 中文 (tersimpan di `settings.ini`) |
+| Resizable | jendela bisa diperbesar/maksimal |
+| CLI | `BiosFlasher.exe --cli write bios.bin -p COM5` |
+| Progress | persen + byte + ETA per tahap |
+
 ## Cara pakai
 
 1. Colok ESP32-C3 ke USB (port USB native, bukan UART/USB-TTL).
@@ -46,12 +63,29 @@ supaya karakter Han tampil rapi.
 
 | File | Keterangan |
 |---|---|
-| `Program.cs` | entry point (tanpa visual styles = look klasik) |
-| `MainForm.cs` | seluruh UI, dirakit manual (tanpa designer) + ganti bahasa |
-| `Lang.cs` | kamus 3 bahasa (83 kunci) + simpan/baca `settings.ini` |
-| `Protocol.cs` | klien serial: prompt `> `, ACK `+`, streaming hex 256 byte |
+| `Program.cs` | entry point; routing GUI vs `--cli`, AttachConsole untuk output CLI |
+| `MainForm.cs` | seluruh UI, dirakit manual (tanpa designer) + ganti bahasa + drag&drop |
+| `Lang.cs` | kamus 3 bahasa + simpan/baca `settings.ini` |
+| `Protocol.cs` | klien serial: prompt `> `, ACK `+`, hex & biner (`wbin`), CRC32 |
 | `ChipInfo.cs` | parser keluaran perintah `info` |
+| `PortScanner.cs` | deteksi port ESP32-C3 (VID 0x303A) via registry |
+| `Cli.cs` | mode command line (info/write/verify/backup/erase/freq) |
 | `build.bat` | `dotnet publish` -> `dist\BiosFlasher.exe` (single file) |
+| `.github/workflows/build.yml` | CI: build + publish artifact |
+
+## Mode command line
+
+```bat
+BiosFlasher.exe --cli info
+BiosFlasher.exe --cli write bios.bin -p COM5
+BiosFlasher.exe --cli verify bios.bin
+BiosFlasher.exe --cli backup backup.bin
+BiosFlasher.exe --cli erase --yes
+BiosFlasher.exe --cli freq 8000
+BiosFlasher.exe --cli --help
+```
+
+Exit code: `0` sukses, `1` gagal, `2` argumen salah.
 
 ## Build
 

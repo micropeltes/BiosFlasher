@@ -21,11 +21,13 @@ namespace BiosFlasher
         private ComboBox cmbPort, cmbLang;
         private Button btnRefresh, btnConnect, btnInfo, btnBrowse;
         private Button btnWrite, btnVerify, btnBackup, btnErase, btnCancel;
+        private Button btnSaveLog, btnAbout;
         private Label lblConn, lblPort, lblLang, lblLangHint, lblChipName;
         private Label lblJedec, lblSize, lblStatus, lblFileInfo, lblProg, lblNote;
         private GroupBox gbPort, gbChip, gbFile, gbAction;
         private TextBox txtFile, txtLog;
         private ProgressBar pb;
+        private string _logPath;
 
         private string _progKey;          // status statis agar bisa diterjemahkan ulang
         private object[] _progArgs;
@@ -34,16 +36,24 @@ namespace BiosFlasher
         {
             L.AutoDetect();
 
-            FormBorderStyle = FormBorderStyle.FixedSingle;
-            MaximizeBox = false;
+            FormBorderStyle = FormBorderStyle.Sizable;
+            MaximizeBox = true;
+            MinimumSize = new Size(660, 620);
             StartPosition = FormStartPosition.CenterScreen;
             BackColor = SystemColors.Control;
-            ClientSize = new Size(632, 584);
+            ClientSize = new Size(632, 604);
 
             BuildUi();
             ApplyLanguage(L.Current, false);
             RefreshPorts();
             SetBusy(false);
+
+            Log(L.F("log.startfile", EnsureLogFile()));
+
+            AllowDrop = true;
+            DragEnter += OnDragEnter;
+            DragDrop += OnDragDrop;
+            Resize += (s, e) => ApplyLayout();
 
             FormClosing += OnFormClosing;
         }
@@ -185,6 +195,65 @@ namespace BiosFlasher
             txtLog.BackColor = SystemColors.Window;
             txtLog.Font = new Font("Courier New", 8.25F, FontStyle.Regular, GraphicsUnit.Point);
             Controls.Add(txtLog);
+
+            /* ---------- tombol bawah ---------- */
+            btnSaveLog = MakeButton("", 8, 0, 120, 26);
+            btnSaveLog.Click += BtnSaveLog_Click;
+            Controls.Add(btnSaveLog);
+
+            btnAbout = MakeButton("", 136, 0, 100, 26);
+            btnAbout.Click += BtnAbout_Click;
+            Controls.Add(btnAbout);
+
+            ApplyLayout();
+        }
+
+        /// <summary>Atur posisi elemen yang ikut berubah saat jendela di-resize.</summary>
+        private void ApplyLayout()
+        {
+            if (txtLog == null) return;
+
+            int w = ClientSize.Width;
+            int h = ClientSize.Height;
+            int bottomY = h - 34;
+
+            gbPort.Width = w - 16;
+            gbChip.Width = w - 16;
+            gbFile.Width = w - 16;
+            gbAction.Width = w - 16;
+
+            btnRefresh.Left = w - 616 + 182;
+            btnConnect.Left = w - 616 + 270;
+            lblConn.Left = w - 616 + 366;
+            lblConn.Width = w - lblConn.Left - 12;
+            lblLangHint.Width = w - lblLangHint.Left - 12;
+
+            txtFile.Width = w - 16 - 12 - 130;
+            btnBrowse.Left = txtFile.Right + 6;
+            lblFileInfo.Width = w - 24;
+
+            btnWrite.Width = (w - 40) / 3;
+            btnVerify.Width = btnWrite.Width;
+            btnBackup.Width = btnWrite.Width;
+            btnVerify.Left = btnWrite.Right + 6;
+            btnBackup.Left = btnVerify.Right + 6;
+
+            btnErase.Width = btnWrite.Width;
+            btnCancel.Width = btnWrite.Width;
+            btnCancel.Left = btnBackup.Left;
+
+            lblNote.Left = btnWrite.Right + 6;
+            lblNote.Width = btnCancel.Left - lblNote.Left - 12;
+
+            pb.Width = w - 16;
+            lblProg.Width = w - 16;
+
+            int logTop = 446;
+            int logHeight = Math.Max(70, bottomY - 8 - logTop);
+            txtLog.SetBounds(8, logTop, w - 16, logHeight);
+
+            btnSaveLog.Top = bottomY;
+            btnAbout.Top = bottomY;
         }
 
         private Button MakeButton(string text, int x, int y, int w, int h)
@@ -265,6 +334,8 @@ namespace BiosFlasher
             btnErase.Text = L.T("btn.erase");
             btnCancel.Text = L.T("btn.cancel");
             lblNote.Text = L.T("lbl.note");
+            btnSaveLog.Text = L.T("btn.savelog");
+            btnAbout.Text = L.T("btn.about");
 
             ApplyFontToChildren(this, baseFont);
             lblChipName.Font = new Font(baseFont, FontStyle.Bold);
@@ -327,10 +398,24 @@ namespace BiosFlasher
             cmbPort.Items.Clear();
             string[] ports = FlasherDevice.GetPorts();
             foreach (string p in ports) cmbPort.Items.Add(p);
-            if (keep != null && cmbPort.Items.Contains(keep)) cmbPort.SelectedItem = keep;
-            else if (cmbPort.Items.Count > 0) cmbPort.SelectedIndex = cmbPort.Items.Count - 1;
+
+            // utamakan port USB ESP32-C3 (VID 0x303A)
+            string esp = PortScanner.FindEsp32();
+            if (esp != null && cmbPort.Items.Contains(esp))
+            {
+                cmbPort.SelectedItem = esp;
+            }
+            else if (keep != null && cmbPort.Items.Contains(keep))
+            {
+                cmbPort.SelectedItem = keep;
+            }
+            else if (cmbPort.Items.Count > 0)
+            {
+                cmbPort.SelectedIndex = cmbPort.Items.Count - 1;
+            }
 
             if (ports.Length == 0) Log(L.T("log.noports"));
+            else if (esp != null) Log(L.F("log.espport", esp));
         }
 
         private void Ui(Action action)
@@ -343,7 +428,39 @@ namespace BiosFlasher
         private void Log(string message)
         {
             if (string.IsNullOrEmpty(message)) return;
-            txtLog.AppendText(message.Replace("\r", "").TrimEnd() + Environment.NewLine);
+            string line = message.Replace("\r", "").TrimEnd();
+            txtLog.AppendText(line + Environment.NewLine);
+            AppendLogFile(line);
+        }
+
+        private string EnsureLogFile()
+        {
+            if (_logPath != null) return _logPath;
+            try
+            {
+                string dir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    "BiosFlasher", "logs");
+                Directory.CreateDirectory(dir);
+                _logPath = Path.Combine(dir, "app-" + DateTime.Now.ToString("yyyyMMdd") + ".log");
+            }
+            catch
+            {
+                _logPath = "";
+            }
+            return _logPath;
+        }
+
+        private void AppendLogFile(string line)
+        {
+            try
+            {
+                string path = EnsureLogFile();
+                if (path.Length == 0) return;
+                File.AppendAllText(path,
+                    DateTime.Now.ToString("HH:mm:ss") + "  " + line + Environment.NewLine);
+            }
+            catch { }
         }
 
         private void ReportLog(string message)
@@ -464,11 +581,37 @@ namespace BiosFlasher
             return n + " byte";
         }
 
+        private DateTime _stageStart = DateTime.UtcNow;
+        private string _stageName;
+
         private void ProgressRange(long done, long total, double from, double to, string stageKey)
         {
+            if (_stageName != stageKey)
+            {
+                _stageName = stageKey;
+                _stageStart = DateTime.UtcNow;
+            }
+
             double frac = total > 0 ? (double)done / total : 1.0;
             double pct = from + (to - from) * frac;
+
+            double seconds = (DateTime.UtcNow - _stageStart).TotalSeconds;
             string text = L.F("prog.stage", L.T(stageKey), frac * 100.0, Bytes(done), Bytes(total));
+
+            if (seconds > 0.4 && done > 0 && done < total)
+            {
+                double rate = done / seconds;
+                double left = (total - done) / rate;
+                if (left >= 0 && left < 86400)
+                {
+                    TimeSpan ts = TimeSpan.FromSeconds(left);
+                    string eta = ts.TotalMinutes >= 1.0
+                        ? ((int)ts.TotalMinutes) + ":" + ts.Seconds.ToString("00")
+                        : ts.Seconds + "s";
+                    text += "  " + L.F("prog.eta", eta);
+                }
+            }
+
             Ui(() => SetProgress(pct, text));
         }
 
@@ -542,29 +685,114 @@ namespace BiosFlasher
                 ofd.Title = L.T("grp.file");
                 ofd.Filter = "BIN (*.bin)|*.bin|ROM (*.rom)|*.rom|*.*|*.*";
                 if (ofd.ShowDialog(this) != DialogResult.OK) return;
+                LoadFile(ofd.FileName);
+            }
+        }
+
+        /// <summary>Deteksi file Intel HEX ('\'':'' + digit hex di awal baris).</summary>
+        private static bool LooksLikeIntelHex(byte[] data)
+        {
+            if (data == null || data.Length < 11) return false;
+            if (data[0] != (byte)':') return false;
+            for (int i = 1; i < 11; i++)
+            {
+                byte b = data[i];
+                bool hex = (b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F');
+                if (!hex) return false;
+            }
+            return true;
+        }
+
+        /// <summary>Muat file BIOS (dipakai tombol 'Pilih File' dan drag &amp; drop).</summary>
+        private void LoadFile(string path)
+        {
+            try
+            {
+                FileInfo fi = new FileInfo(path);
+                if (fi.Length == 0) throw new Exception(L.T("msg.badfile.empty"));
+                if (fi.Length > 32L * 1024L * 1024L) throw new Exception(L.T("msg.badfile.big"));
+
+                byte[] data = File.ReadAllBytes(path);
+                if (LooksLikeIntelHex(data))
+                    throw new Exception(L.T("msg.badfile.hex"));
+
+                _fileData = data;
+                _filePath = path;
+                UpdateFileUi();
+                Log(L.F("log.filesel", path, Bytes(data.Length)));
+                SetStatusKey("prog.file.ready");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, L.F("msg.badfile", ex.Message), L.T("title.error"),
+                                MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        /* ------------------------------------------------------------------
+         *  drag & drop file .bin
+         * ---------------------------------------------------------------- */
+
+        private void OnDragEnter(object sender, DragEventArgs e)
+        {
+            e.Effect = DragDropEffects.None;
+            if (_busy || e.Data == null || !e.Data.GetDataPresent(DataFormats.FileDrop)) return;
+
+            string[] files = e.Data.GetData(DataFormats.FileDrop) as string[];
+            if (files == null || files.Length != 1 || !File.Exists(files[0])) return;
+
+            string ext = Path.GetExtension(files[0]).ToLowerInvariant();
+            if (ext == ".bin" || ext == ".rom" || ext == ".img" || ext == ".fd" || ext == "")
+                e.Effect = DragDropEffects.Copy;
+        }
+
+        private void OnDragDrop(object sender, DragEventArgs e)
+        {
+            if (_busy || e.Data == null || !e.Data.GetDataPresent(DataFormats.FileDrop)) return;
+            string[] files = e.Data.GetData(DataFormats.FileDrop) as string[];
+            if (files == null || files.Length == 0) return;
+            LoadFile(files[0]);
+        }
+
+        /* ------------------------------------------------------------------
+         *  simpan log + tentang
+         * ---------------------------------------------------------------- */
+
+        private void BtnSaveLog_Click(object sender, EventArgs e)
+        {
+            using (SaveFileDialog sfd = new SaveFileDialog())
+            {
+                sfd.Title = L.T("btn.savelog");
+                sfd.Filter = "TXT (*.txt)|*.txt|LOG (*.log)|*.log|*.*|*.*";
+                sfd.FileName = "biosflasher-" + DateTime.Now.ToString("yyyyMMdd-HHmm") + ".txt";
+                if (sfd.ShowDialog(this) != DialogResult.OK) return;
 
                 try
                 {
-                    FileInfo fi = new FileInfo(ofd.FileName);
-                    if (fi.Length == 0) throw new Exception(L.T("msg.badfile.empty"));
-                    if (fi.Length > 32L * 1024L * 1024L) throw new Exception(L.T("msg.badfile.big"));
-
-                    byte[] data = File.ReadAllBytes(ofd.FileName);
-                    if (data.Length >= 2 && data[0] == 0x3A && data[1] == 0x29)
-                        throw new Exception(L.T("msg.badfile.hex"));
-
-                    _fileData = data;
-                    _filePath = ofd.FileName;
-                    UpdateFileUi();
-                    Log(L.F("log.filesel", ofd.FileName, Bytes(data.Length)));
-                    SetStatusKey("prog.file.ready");
+                    File.WriteAllText(sfd.FileName, txtLog.Text);
+                    MessageBox.Show(this, L.F("log.exported", sfd.FileName), L.T("title.info"),
+                                    MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
                 catch (Exception ex)
                 {
-                    MessageBox.Show(this, L.F("msg.badfile", ex.Message), L.T("title.error"),
+                    MessageBox.Show(this, ex.Message, L.T("title.error"),
                                     MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }
+        }
+
+        private void BtnAbout_Click(object sender, EventArgs e)
+        {
+            string version = "1.0.0";
+            try
+            {
+                Version v = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+                if (v != null) version = v.ToString(3);
+            }
+            catch { }
+
+            MessageBox.Show(this, L.F("about.text", version), L.T("btn.about"),
+                            MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
         private void BtnWrite_Click(object sender, EventArgs e)
@@ -602,15 +830,52 @@ namespace BiosFlasher
                     });
                 }
 
-                ReportLog(L.T("log.writing"));
-                string r1 = dev.WriteFlash(0, data,
-                    (d, t) => ProgressRange(d, t, 25, 70, "prog.write"), ct, ReportLog);
-                ReportLog(r1);
+                /* blank check: pastikan hasil erase benar-benar 0xFF */
+                ct.ThrowIfCancellationRequested();
+                ReportLog(L.T("log.blank.check"));
+                uint badFirst, badCount;
+                if (dev.TryBlankCheck(0, (uint)data.Length, out badFirst, out badCount, ReportLog))
+                {
+                    if (badCount == 0) ReportLog(L.T("log.blank.ok"));
+                    else ReportLog(L.F("log.blank.fail", badCount, "0x" + badFirst.ToString("X")));
+                }
+                else
+                {
+                    ReportLog(L.T("log.blank.old"));
+                }
 
-                ReportLog(L.T("log.verifying"));
-                string r2 = dev.VerifyFlash(0, data,
-                    (d, t) => ProgressRange(d, t, 70, 100, "prog.verify"), ct, ReportLog);
-                ReportLog(r2);
+                /* tulis: mode biner (cepat) dengan fallback hex */
+                ReportLog(L.T("log.wbin"));
+                bool binary = dev.TryWriteFlashBinary(0, data,
+                    (d, t) => ProgressRange(d, t, 25, 70, "prog.write"), ct, ReportLog);
+
+                if (!binary)
+                {
+                    ReportLog(L.T("log.wbin.old"));
+                    ReportLog(L.T("log.writing"));
+                    ReportLog(dev.WriteFlash(0, data,
+                        (d, t) => ProgressRange(d, t, 25, 70, "prog.write"), ct, ReportLog));
+                }
+
+                /* verifikasi: CRC32 (cepat), fallback byte-per-byte */
+                ReportLog(L.T("log.crc.check"));
+                uint fileCrc = Crc32.Compute(data);
+                uint chipCrc;
+                if (dev.TryReadCrc(0, (uint)data.Length, out chipCrc, ReportLog))
+                {
+                    if (chipCrc != fileCrc)
+                    {
+                        throw new DeviceException(L.F("log.crc.mismatch",
+                            fileCrc.ToString("X8"), chipCrc.ToString("X8")));
+                    }
+                    ReportLog(L.F("log.crc.match", fileCrc.ToString("X8")));
+                }
+                else
+                {
+                    ReportLog(L.T("log.crc.old"));
+                    ReportLog(dev.VerifyFlash(0, data,
+                        (d, t) => ProgressRange(d, t, 70, 100, "prog.verify"), ct, ReportLog));
+                }
 
                 Ui(() => SetProgress(100, L.T("prog.done.write")));
             });
